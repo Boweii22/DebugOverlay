@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="200dp"
+    android:layout_height="200dp"
+    android:orientation="vertical"
+    android:paddingStart="10dp"
+    android:paddingEnd="10dp"
+    android:paddingTop="6dp"
+    android:paddingBottom="6dp"
+    android:layout_gravity="center"
+    android:gravity="center"
+    android:background="@drawable/rounded_background">
+
+    <TextView
+android:id="@+id/fps_text"
+android:layout_width="wrap_content"
+android:layout_height="wrap_content"
+android:text="FPS: 0"
+android:textSize="12sp"
+android:textColor="#FFFFFF"
+android:paddingTop="1dp"
+android:paddingBottom="1dp" />
+
+<TextView
+android:id="@+id/memory_text"
+android:layout_width="wrap_content"
+android:layout_height="wrap_content"
+android:text="Memory: 0 MB"
+android:textSize="12sp"
+android:textColor="#FFFFFF"
+android:paddingTop="1dp"
+android:paddingBottom="1dp" />
+
+<TextView
+android:id="@+id/cpu_text"
+android:layout_width="wrap_content"
+android:layout_height="wrap_content"
+android:text="CPU: 0.0%"
+android:textSize="12sp"
+android:textColor="#FFFFFF"
+android:paddingTop="1dp"
+android:paddingBottom="1dp" />
+
+<TextView
+android:id="@+id/network_text"
+android:layout_width="wrap_content"
+android:layout_height="wrap_content"
+android:text="Net: N/A (0 calls)"
+android:textSize="12sp"
+android:textColor="#FFFFFF"
+android:paddingTop="1dp"
+android:paddingBottom="1dp" />
+    </LinearLayout>

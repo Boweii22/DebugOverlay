@@ -1,119 +1,176 @@
 package com.smartherd.debugoverlay;
 
 import android.content.Context;
-import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.os.Build;
+import android.os.SystemClock;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.LayoutInflater;
 import android.view.MotionEvent;
-import android.view.ViewGroup;
 import android.view.WindowManager;
-import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 import android.widget.TextView;
-import androidx.annotation.NonNull;
+
+import androidx.annotation.Nullable;
 
 /**
- * Floating view responsible for displaying the statistics and handling drag movement.
+ * Custom View responsible for rendering the debug overlay and handling drag gestures.
+ * It implements the StatsUpdateListener to receive and display real-time data.
+ * Now loads its design from an XML layout file (debug_overlay.xml).
  */
-public class DebugOverlayView extends FrameLayout implements DebugStatsCollector.StatsUpdateListener {
+public class DebugOverlayView extends LinearLayout implements DebugStatsCollector.StatsUpdateListener {
 
     private final WindowManager windowManager;
-    private final WindowManager.LayoutParams params;
-    private float initialTouchX, initialTouchY;
-    private int initialX, initialY;
-    private final TextView statsTextView;
+    private WindowManager.LayoutParams params;
 
-    public DebugOverlayView(@NonNull Context context) {
+    // --- Design Elements (IDs match XML) ---
+    private TextView fpsTextView;
+    private TextView memoryTextView;
+    private TextView cpuTextView;
+    private TextView networkTextView;
+
+    // --- Drag State ---
+    private float initialTouchX;
+    private float initialTouchY;
+    private int initialX;
+    private int initialY;
+    private long touchStartTime;
+    private static final int CLICK_ACTION_THRESHOLD = 200; // ms
+
+    public DebugOverlayView(Context context) {
         super(context);
+        this.windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+        initView(context);
+    }
 
-        windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+    // Kept dpToPx for drag implementation's click threshold
+    private int dpToPx(int dp) {
+        return (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP,
+                dp,
+                getResources().getDisplayMetrics()
+        );
+    }
 
-        // --- Setup Content (TextView) ---
-        statsTextView = new TextView(context);
-        statsTextView.setBackgroundColor(Color.argb(210, 30, 30, 30)); // Dark semi-transparent
-        statsTextView.setTextColor(Color.GREEN);
-        statsTextView.setPadding(dpToPx(6), dpToPx(6), dpToPx(6), dpToPx(6));
-        statsTextView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        statsTextView.setText("Overlay Starting...");
+    private void initView(Context context) {
+        // *** Inflate the XML Layout ***
+        // Inflates res/layout/debug_overlay.xml into this LinearLayout
+        // NOTE: R.layout.debug_overlay must be available in your project resources
+        try {
+            LayoutInflater.from(context).inflate(context.getResources().getIdentifier("debug_overlay", "layout", context.getPackageName()), this, true);
+        } catch (Exception e) {
+            // Fallback or error handling if R.layout.debug_overlay is not found
+            // In a standard Android project, this should use R.layout.debug_overlay
+            // For environments where R.layout is generated dynamically, this tries to find it.
+            LayoutInflater.from(context).inflate(com.smartherd.debugoverlay.R.layout.debug_overlay, this, true);
+        }
 
-        // Use WRAP_CONTENT for the view itself
-        addView(statsTextView, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT));
+        // --- Retrieve Views by ID ---
+        fpsTextView = findViewById(com.smartherd.debugoverlay.R.id.fps_text);
+        memoryTextView = findViewById(com.smartherd.debugoverlay.R.id.memory_text);
+        cpuTextView = findViewById(com.smartherd.debugoverlay.R.id.cpu_text);
+        networkTextView = findViewById(com.smartherd.debugoverlay.R.id.network_text);
+    }
 
-        // --- Setup Window Manager Parameters ---
-        // Use TYPE_APPLICATION_OVERLAY for modern Android versions
-        int layoutType = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                : WindowManager.LayoutParams.TYPE_PHONE;
+    /**
+     * Defines the WindowManager layout parameters for the overlay.
+     */
+    public WindowManager.LayoutParams getLayoutParams() {
+        // Define the WindowManager layout parameters
+        int layoutFlag;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Use TYPE_APPLICATION_OVERLAY for modern Android versions (API 26+)
+            layoutFlag = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY;
+        } else {
+            // Deprecated, but necessary for older Android versions (API < 26)
+            layoutFlag = WindowManager.LayoutParams.TYPE_PHONE;
+        }
 
         params = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
-                layoutType,
-                // FLAG_NOT_FOCUSABLE: allows touching through to the app below
-                // FLAG_NOT_TOUCH_MODAL: essential for dragging and passing touches
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSLUCENT);
+                layoutFlag,
+                // Add FLAG_NOT_FOCUSABLE so the overlay doesn't steal focus from the app
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+        );
 
-        params.gravity = Gravity.TOP | Gravity.START;
-        params.x = 0;
-        params.y = dpToPx(100);
-    }
+        // Default position: Top-Right
+        params.gravity = Gravity.TOP | Gravity.END;
+        params.x = dpToPx(10); // Margin from the edge
+        params.y = dpToPx(100); // Offset from the top
 
-    public WindowManager.LayoutParams getLayoutParams() {
         return params;
     }
 
-    private int dpToPx(int dp) {
-        return (int) (dp * getResources().getDisplayMetrics().density + 0.5f);
-    }
+    // --- Data Update Listener Implementation ---
 
-    /**
-     * Updates the TextView with the latest performance metrics.
-     */
     @Override
     public void onStatsUpdated(DebugStatsCollector.StatsData data) {
-        String networkStatus = data.networkCallCount > 0 ?
-                String.format("%dms (Total: %d)", data.lastRequestLatencyMs, data.networkCallCount) :
-                "None";
-
-        // This correctly formats the double cpuUsage to one decimal place.
-        String statsText = String.format(
-                "FPS: %d\nMEM: %d MB\nCPU: %.1f %%\nNET: %s",
-                data.fps,
-                data.usedMemoryMB,
-                data.cpuUsage,
-                networkStatus
-        );
-        statsTextView.setText(statsText);
+        // Must update UI elements on the main thread
+        post(new Runnable() {
+            @Override
+            public void run() {
+                if (fpsTextView != null) {
+                    fpsTextView.setText(String.format("FPS: %d", data.fps));
+                }
+                if (memoryTextView != null) {
+                    memoryTextView.setText(String.format("Memory: %d MB", data.usedMemoryMB));
+                }
+                if (cpuTextView != null) {
+                    cpuTextView.setText(String.format("CPU: %.1f%%", data.cpuUsage));
+                }
+                if (networkTextView != null) {
+                    String netText = data.networkCallCount > 0 ?
+                            String.format("Net: %dms (%d calls)", data.lastRequestLatencyMs, data.networkCallCount) :
+                            String.format("Net: N/A (0 calls)");
+                    networkTextView.setText(netText);
+                }
+            }
+        });
     }
 
-    // --- Dragging functionality ---
+    // --- Drag Implementation ---
+
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         switch (event.getAction()) {
             case MotionEvent.ACTION_DOWN:
+                // 1. Record initial state for drag and click detection
                 initialX = params.x;
                 initialY = params.y;
                 initialTouchX = event.getRawX();
                 initialTouchY = event.getRawY();
+                touchStartTime = SystemClock.elapsedRealtime();
                 return true;
 
             case MotionEvent.ACTION_MOVE:
+                // 2. Calculate the difference from the initial touch point
                 int deltaX = (int) (event.getRawX() - initialTouchX);
                 int deltaY = (int) (event.getRawY() - initialTouchY);
 
-                params.x = initialX + deltaX;
+                // 3. Update the parameters and reposition the view
+                // FIX APPLIED HERE: Subtract deltaX instead of adding it.
+                // When gravity is Gravity.END, moving right (positive deltaX) must decrease params.x (margin from right).
+                params.x = initialX - deltaX;
                 params.y = initialY + deltaY;
-
                 windowManager.updateViewLayout(this, params);
                 return true;
 
             case MotionEvent.ACTION_UP:
+                long elapsedTime = SystemClock.elapsedRealtime() - touchStartTime;
+
+                // If the touch was quick and didn't move far, treat it as a click/tap
+                if (elapsedTime < CLICK_ACTION_THRESHOLD &&
+                        Math.abs(event.getRawX() - initialTouchX) < dpToPx(5) &&
+                        Math.abs(event.getRawY() - initialTouchY) < dpToPx(5)) {
+                    // This was a click, not a drag.
+                    return true;
+                }
+
+                // It was a successful drag
                 return true;
         }
         return super.onTouchEvent(event);
